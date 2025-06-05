@@ -144,14 +144,81 @@ object OpenAPIGen {
 
     def contentExamples(genExamples: Boolean): Map[String, OpenAPI.ReferenceOr.Or[OpenAPI.Example]] =
       content.flatMap {
-        case mc @ MetaCodec(HttpCodec.Content(codec, _, _), _) if codec.lookup(MediaType.application.json).isDefined =>
-          mc.examples(codec.lookup(MediaType.application.json).get._2.schema, genExamples)
-        case mc @ MetaCodec(HttpCodec.ContentStream(codec, _, _), _)
-            if codec.lookup(MediaType.application.json).isDefined =>
-          mc.examples(codec.lookup(MediaType.application.json).get._2.schema, genExamples)
-        case _                                                                                                       =>
+        case mc @ MetaCodec(HttpCodec.Content(codec, mediaType, _), _) =>
+          val schema = codec.schema
+          val examples = mc.examples(schema, genExamples)
+          examples.map { case (k, v) =>
+            k -> OpenAPI.ReferenceOr.Or(
+              OpenAPI.Example(
+                value = Some(transformExampleByMediaType(v, mediaType)),
+                summary = None,
+                description = None,
+                externalValue = None
+              )
+            )
+          }
+        case mc @ MetaCodec(HttpCodec.ContentStream(codec, mediaType, _), _) =>
+          val schema = codec.schema
+          val examples = mc.examples(schema, genExamples)
+          examples.map { case (k, v) =>
+            k -> OpenAPI.ReferenceOr.Or(
+              OpenAPI.Example(
+                value = Some(transformExampleByMediaType(v, mediaType)),
+                summary = None,
+                description = None,
+                externalValue = None
+              )
+            )
+          }
+        case _ =>
           Map.empty[String, OpenAPI.ReferenceOr.Or[OpenAPI.Example]]
       }.toMap
+
+    private def transformExampleByMediaType(value: Json, mediaType: MediaType): Json = {
+      mediaType match {
+        case MediaType.text.plain =>
+          value match {
+            case Json.Str(str) => Json.Str(str)
+            case Json.Obj(fields) if fields.size == 1 => 
+              fields.head._2 match {
+                case Json.Str(str) => Json.Str(str)
+                case other => other
+              }
+            case other => other
+          }
+        case MediaType.text.html =>
+          value match {
+            case Json.Str(str) => Json.Str(str)
+            case Json.Obj(fields) if fields.size == 1 =>
+              fields.head._2 match {
+                case Json.Str(str) => Json.Str(str)
+                case other => other
+              }
+            case other => other
+          }
+        case MediaType.application.`x-www-form-urlencoded` =>
+          value match {
+            case Json.Obj(fields) =>
+              val formData = fields.map { case (k, v) =>
+                s"$k=${v.toString}"
+              }.mkString("&")
+              Json.Str(formData)
+            case other => other
+          }
+        case MediaType.multipart.`form-data` =>
+          value match {
+            case Json.Obj(fields) =>
+              Json.Obj(fields.map { case (k, v) =>
+                k -> (v match {
+                  case Json.Str(str) => Json.Str(str)
+                  case other => other
+                })
+              })
+            case other => other
+          }
+        case _ => value
+      }
+    }
 
     // in case of alternatives,
     // the doc to the alternation is added to all sub elements of the alternatives.
